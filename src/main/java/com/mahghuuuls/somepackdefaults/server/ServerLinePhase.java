@@ -9,6 +9,7 @@ import com.mahghuuuls.somepackdefaults.report.ForgeStartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
 import com.mahghuuuls.somepackdefaults.rules.EntryChecker;
+import com.mahghuuuls.somepackdefaults.rules.GameruleLookup;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import com.mahghuuuls.somepackdefaults.rules.ServerLineTable;
 import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
@@ -19,6 +20,7 @@ import org.apache.logging.log4j.Logger;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -35,21 +37,24 @@ public final class ServerLinePhase {
     private final StartReport report;
     private final StartBlocker blocker;
     private final Logger logger;
+    /** The gamerules every vanilla world has, so their values are checked before any world loads. */
+    private final GameruleLookup vanillaGamerules;
 
     private ServerPropertiesFile written;
     /** The {@code level-type} entry this start wrote, checked later against the registered world types. */
     private Entry writtenLevelType;
 
-    public ServerLinePhase(Logger logger) {
+    public ServerLinePhase(Logger logger, GameruleLookup vanillaGamerules) {
         // Vanilla reads server.properties from the server's working folder.
-        this(Paths.get("server.properties"), new StartReport(), new ForgeStartBlocker(logger), logger);
+        this(Paths.get("server.properties"), new StartReport(), new ForgeStartBlocker(logger), logger, vanillaGamerules);
     }
 
-    ServerLinePhase(Path serverProperties, StartReport report, StartBlocker blocker, Logger logger) {
+    ServerLinePhase(Path serverProperties, StartReport report, StartBlocker blocker, Logger logger, GameruleLookup vanillaGamerules) {
         this.serverProperties = serverProperties;
         this.report = report;
         this.blocker = blocker;
         this.logger = logger;
+        this.vanillaGamerules = vanillaGamerules;
     }
 
     public StartReport report() {
@@ -63,7 +68,11 @@ public final class ServerLinePhase {
         apply(EntryFiles.inConfigFolder(event.getModConfigurationDirectory().toPath()));
     }
 
-    /** Checks the server-line entries and writes the lines, or stops the server. */
+    /**
+     * Checks every entry that can be checked before a world loads (all server lines, and gamerule
+     * entries that name a vanilla gamerule), then writes the server lines; or stops the server with
+     * every problem found and writes nothing.
+     */
     void apply(EntryFiles files) {
         EntrySet set;
         try {
@@ -73,8 +82,15 @@ public final class ServerLinePhase {
             return;
         }
         List<Problem> problems = EntryChecker.checkServerLines(set);
-        if (!problems.isEmpty()) {
-            stop(problems);
+        List<Problem> gameruleProblems = EntryChecker.checkGamerulesBeforeLoad(set, vanillaGamerules);
+        if (!problems.isEmpty() || !gameruleProblems.isEmpty()) {
+            report.problems(SettingCategory.GAMERULE, gameruleProblems);
+            report.log(logger, SettingCategory.GAMERULE);
+            List<Problem> all = new ArrayList<Problem>(problems);
+            all.addAll(gameruleProblems);
+            report.problems(SettingCategory.SERVER_LINE, problems);
+            report.log(logger, SettingCategory.SERVER_LINE);
+            blocker.stopBeforeWorldLoad(all);
             return;
         }
         try {

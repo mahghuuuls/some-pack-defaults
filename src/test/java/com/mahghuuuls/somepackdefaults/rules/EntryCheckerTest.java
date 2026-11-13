@@ -104,6 +104,50 @@ class EntryCheckerTest {
                 + "Allowed: a registered world type: default, flat, largebiomes, amplified, rtg.", problem.message());
     }
 
+    private static final GameruleLookup VANILLA_RULES = new GameruleLookup() {
+        @Override
+        public Kind kindOf(String name) {
+            if (name.equals("keepInventory") || name.equals("doDaylightCycle")) {
+                return Kind.TRUE_OR_FALSE;
+            }
+            return name.equals("randomTickSpeed") ? Kind.WHOLE_NUMBER : null;
+        }
+    };
+
+    private static Entry gamerule(Mode mode, String name, String value, int line) {
+        return new Entry(SettingCategory.GAMERULE, mode, name, value, line);
+    }
+
+    @Test
+    void gameruleValuesFollowTheGameruleCommand() {
+        List<Problem> problems = EntryChecker.checkGamerules(new EntrySet(Arrays.asList(
+                gamerule(Mode.REAPPLY, "keepInventory", "true", 1),
+                gamerule(Mode.REAPPLY, "doDaylightCycle", "False", 2),
+                gamerule(Mode.REAPPLY, "randomTickSpeed", "fast", 3)), Collections.<MalformedLine>emptyList()), VANILLA_RULES);
+        assertEquals(2, problems.size());
+        assertEquals("gamerules-reapply.properties line 2: doDaylightCycle=False: doDaylightCycle takes true or false. Allowed: true or false.",
+                problems.get(0).message());
+        assertEquals("gamerules-reapply.properties line 3: randomTickSpeed=fast: randomTickSpeed takes a whole number. Allowed: a whole number.",
+                problems.get(1).message());
+    }
+
+    @Test
+    void beforeLoadOnlyVanillaNamesAreCheckedForValues() {
+        EntrySet set = new EntrySet(Arrays.asList(gamerule(Mode.REAPPLY, "modRule", "anything", 1), gamerule(Mode.REAPPLY, "keepInventory", "yes", 2)),
+                Collections.<MalformedLine>emptyList());
+        List<Problem> problems = EntryChecker.checkGamerulesBeforeLoad(set, VANILLA_RULES);
+        assertEquals(1, problems.size());
+        assertEquals(2, problems.get(0).lineNumber());
+        assertEquals(2, EntryChecker.checkGamerules(set, VANILLA_RULES).size());
+    }
+
+    @Test
+    void aGameruleInBothFilesIsReported() {
+        EntrySet set = new EntrySet(Arrays.asList(gamerule(Mode.DEFAULT, "keepInventory", "true", 1), gamerule(Mode.REAPPLY, "keepInventory", "true", 1)),
+                Collections.<MalformedLine>emptyList());
+        assertEquals(2, EntryChecker.checkGamerulesBeforeLoad(set, VANILLA_RULES).size());
+    }
+
     @Test
     void gameruleEntriesAreNotPartOfTheServerLineCheck() {
         Entry gamerule = new Entry(SettingCategory.GAMERULE, Mode.REAPPLY, "pvp", "banana", 1);

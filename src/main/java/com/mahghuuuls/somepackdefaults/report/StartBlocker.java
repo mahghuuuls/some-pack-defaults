@@ -15,4 +15,11 @@ public interface StartBlocker {
      * call does not return in the real game.
      */
     void stopBeforeWorldLoad(List<Problem> problems);
+
+    /**
+     * Stops a start after its world has loaded, on a dedicated server or in singleplayer, with the
+     * problems shown to whoever started it. Called only from the Forge event bus during a server
+     * tick, never from a mod lifecycle event. This call does not return in the real game.
+     */
+    void stopAfterWorldLoad(List<Problem> problems);
 }

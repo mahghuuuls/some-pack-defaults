@@ -4,6 +4,7 @@ import com.mahghuuuls.somepackdefaults.config.EntryFiles;
 import com.mahghuuuls.somepackdefaults.config.SettingCategory;
 import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
+import com.mahghuuuls.somepackdefaults.rules.GameruleLookup;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
 import org.apache.logging.log4j.LogManager;
@@ -44,6 +45,11 @@ class ServerLinePhaseTest {
         public void stopBeforeWorldLoad(List<Problem> problems) {
             stoppedWith = problems;
         }
+
+        @Override
+        public void stopAfterWorldLoad(List<Problem> problems) {
+            throw new AssertionError("server lines never stop after a world loads");
+        }
     }
 
     @BeforeEach
@@ -60,9 +66,29 @@ class ServerLinePhaseTest {
     }
 
     private ServerLinePhase run() {
-        ServerLinePhase phase = new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test"));
+        ServerLinePhase phase = new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test"), VANILLA_GAMERULES);
         phase.apply(new EntryFiles(config));
         return phase;
+    }
+
+    private static final GameruleLookup VANILLA_GAMERULES = new GameruleLookup() {
+        @Override
+        public Kind kindOf(String name) {
+            return name.equals("keepInventory") ? Kind.TRUE_OR_FALSE : null;
+        }
+    };
+
+    @Test
+    void aBadVanillaGameruleStopsBeforeAnyServerLineIsWrittenAndBothKindsAreReported() throws IOException {
+        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        entries("server-reapply.properties", "motd=Pack Server\npvp=maybe\n");
+        entries("gamerules-reapply.properties", "keepInventory=yes\nmodRule=anything\n");
+        run();
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertEquals(2, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("server-reapply.properties line 2: pvp=maybe"), blocker.stoppedWith.get(0).message());
+        assertTrue(blocker.stoppedWith.get(1).message().startsWith("gamerules-reapply.properties line 1: keepInventory=yes"), blocker.stoppedWith.get(1).message());
     }
 
     /** A world-type registry that knows exactly the given names, matched as the game matches them. */

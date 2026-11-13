@@ -62,6 +62,71 @@ public final class EntryChecker {
                 "a registered world type: " + String.join(", ", worldTypes.knownNames()));
     }
 
+    /**
+     * Checks the gamerule files before a world loads: line form, repeated names, and the values of
+     * entries that name a vanilla gamerule. An entry whose name is not vanilla may belong to a mod
+     * that adds its gamerule only to a loaded world, so it is left for {@link #checkGamerules}.
+     */
+    public static List<Problem> checkGamerulesBeforeLoad(EntrySet set, GameruleLookup vanilla) {
+        List<Problem> problems = gameruleLineProblems(set);
+        for (Entry entry : set.entries(SettingCategory.GAMERULE)) {
+            GameruleLookup.Kind kind = vanilla.kindOf(entry.name());
+            if (kind != null) {
+                addValueProblem(entry, kind, problems);
+            }
+        }
+        problems.addAll(repeatedNames(set, SettingCategory.GAMERULE));
+        return problems;
+    }
+
+    /**
+     * Checks every gamerule entry against a loaded world: the gamerule must exist there and the value
+     * must fit its kind, as the /gamerule command requires. Nothing is ever created.
+     */
+    public static List<Problem> checkGamerules(EntrySet set, GameruleLookup world) {
+        List<Problem> problems = gameruleLineProblems(set);
+        for (Entry entry : set.entries(SettingCategory.GAMERULE)) {
+            GameruleLookup.Kind kind = world.kindOf(entry.name());
+            if (kind == null) {
+                problems.add(new Problem(entry.fileName(), entry.lineNumber(), entry.text(),
+                        "this world has no gamerule named " + entry.name() + " (a typo, or the mod that adds it is not installed)",
+                        "a gamerule this world has; /gamerule lists them"));
+            } else {
+                addValueProblem(entry, kind, problems);
+            }
+        }
+        problems.addAll(repeatedNames(set, SettingCategory.GAMERULE));
+        return problems;
+    }
+
+    private static List<Problem> gameruleLineProblems(EntrySet set) {
+        List<Problem> problems = new ArrayList<Problem>();
+        for (MalformedLine line : set.malformedLines(SettingCategory.GAMERULE)) {
+            problems.add(new Problem(line.fileName(), line.lineNumber(), line.text(), line.reason(), "name=value, such as keepInventory=true"));
+        }
+        return problems;
+    }
+
+    private static void addValueProblem(Entry entry, GameruleLookup.Kind kind, List<Problem> problems) {
+        String value = entry.value();
+        boolean fits;
+        switch (kind) {
+            case TRUE_OR_FALSE:
+                // Exactly as the /gamerule command accepts them: lower case only.
+                fits = "true".equals(value) || "false".equals(value);
+                break;
+            case WHOLE_NUMBER:
+                fits = ValueRule.anyInteger().check(value) == null;
+                break;
+            default:
+                fits = true;
+        }
+        if (!fits) {
+            problems.add(new Problem(entry.fileName(), entry.lineNumber(), entry.text(),
+                    entry.name() + " takes " + kind.allowed(), kind.allowed()));
+        }
+    }
+
     /** A name may appear once per setting category: once in one file, never in both. */
     static List<Problem> repeatedNames(EntrySet set, SettingCategory category) {
         List<Problem> problems = new ArrayList<Problem>();
