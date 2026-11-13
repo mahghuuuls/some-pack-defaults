@@ -1,6 +1,8 @@
 package com.mahghuuuls.somepackdefaults;
 
+import com.mahghuuuls.somepackdefaults.server.ServerLinePhase;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -11,6 +13,12 @@ import org.apache.logging.log4j.Logger;
 @Mod(modid = Tags.MOD_ID, name = Tags.MOD_NAME, version = Tags.VERSION, acceptableRemoteVersions = "*")
 public class SomePackDefaultsMod {
 
-    public static final Logger LOGGER = LogManager.getLogger(Tags.MOD_NAME);
+    private static final Logger LOGGER = LogManager.getLogger(Tags.MOD_ID);
 
+    private final ServerLinePhase serverLines = new ServerLinePhase(LOGGER);
+
+    @Mod.EventHandler
+    public void preInit(FMLPreInitializationEvent event) {
+        serverLines.onPreInit(event);
+    }
 }

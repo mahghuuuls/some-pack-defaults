@@ -26,3 +26,6 @@ run
 
 # development-only jars (see gradle/scripts/dependencies.gradle)
 /libs/
+
+# log4j output of the unit tests
+/logs/
