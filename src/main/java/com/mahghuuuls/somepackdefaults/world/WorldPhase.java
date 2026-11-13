@@ -34,6 +34,8 @@ public final class WorldPhase {
 
     private final StartBlocker blocker;
     private final Logger logger;
+    /** Told when a start's first tick succeeded; this class does not know what the listener does with it. */
+    private final Runnable afterSuccessfulFirstTick;
 
     private EntryFiles files;
     private MinecraftServer server;
@@ -42,13 +44,14 @@ public final class WorldPhase {
     private EntrySet entries;
     private Problem readProblem;
 
-    public WorldPhase(Logger logger) {
-        this(new ForgeStartBlocker(logger), logger);
+    public WorldPhase(Logger logger, Runnable afterSuccessfulFirstTick) {
+        this(new ForgeStartBlocker(logger), logger, afterSuccessfulFirstTick);
     }
 
-    WorldPhase(StartBlocker blocker, Logger logger) {
+    WorldPhase(StartBlocker blocker, Logger logger, Runnable afterSuccessfulFirstTick) {
         this.blocker = blocker;
         this.logger = logger;
+        this.afterSuccessfulFirstTick = afterSuccessfulFirstTick;
     }
 
     public StartReport report() {
@@ -98,7 +101,10 @@ public final class WorldPhase {
         firstTick(entries, new MinecraftGamerules(server.getWorld(0).getGameRules()));
     }
 
-    /** Checks every gamerule entry against the loaded world, then sets the Reapply gamerules, or stops. */
+    /**
+     * Checks every gamerule entry against the loaded world, then sets the Reapply gamerules and
+     * reports the start as successful, or stops.
+     */
     void firstTick(EntrySet set, GameruleTarget world) {
         if (set == null) {
             Problem problem = readProblem != null ? readProblem
@@ -118,6 +124,7 @@ public final class WorldPhase {
             world.set(entry.name(), entry.value());
             report.applied(entry);
         }
+        afterSuccessfulFirstTick.run();
         report.log(logger, SettingCategory.GAMERULE);
     }
 

@@ -18,6 +18,8 @@ public final class ServerLineTable {
 
     /** The line whose value is a world type; its existence is checked once every mod has registered its types. */
     public static final String LEVEL_TYPE = "level-type";
+    /** The line that names the world folder; it decides which worlds count for initial server setup. */
+    public static final String LEVEL_NAME = "level-name";
 
     private static final List<String> HOST_LINES = Collections.unmodifiableList(Arrays.asList(
             "server-ip", "server-port", "enable-rcon", "rcon.port", "rcon.password", "enable-query", "query.port"));
@@ -37,7 +39,7 @@ public final class ServerLineTable {
         lines.put("generate-structures", ValueRule.bool());
         lines.put("generator-settings", ValueRule.anyText());
         lines.put("hardcore", ValueRule.bool());
-        lines.put("level-name", ValueRule.nonEmptyText());
+        lines.put(LEVEL_NAME, ValueRule.nonEmptyText());
         lines.put("level-seed", ValueRule.anyText());
         lines.put(LEVEL_TYPE, ValueRule.nonEmptyText());
         lines.put("max-build-height", ValueRule.integer(64, 256, 16));

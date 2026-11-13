@@ -75,12 +75,27 @@ class WorldPhaseTest {
     private RecordingBlocker blocker;
     private WorldPhase phase;
     private MapWorld world;
+    private int successfulTicks;
 
     @BeforeEach
     void setUp() {
         blocker = new RecordingBlocker();
-        phase = new WorldPhase(blocker, LogManager.getLogger("test"));
+        successfulTicks = 0;
+        phase = new WorldPhase(blocker, LogManager.getLogger("test"), () -> successfulTicks++);
         world = new MapWorld();
+    }
+
+    @Test
+    void aSuccessfulFirstTickIsReportedOnce() {
+        phase.firstTick(set(rule(Mode.REAPPLY, "doDaylightCycle", "false", 1)), world);
+        assertEquals(1, successfulTicks);
+    }
+
+    @Test
+    void aStoppedFirstTickIsNotReportedAsSuccessful() {
+        phase.firstTick(set(rule(Mode.REAPPLY, "keepInventroy", "true", 1)), world);
+        phase.firstTick(null, world);
+        assertEquals(0, successfulTicks);
     }
 
     private static Entry rule(Mode mode, String name, String value, int line) {

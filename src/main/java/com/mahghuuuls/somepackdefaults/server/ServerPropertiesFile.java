@@ -39,6 +39,11 @@ final class ServerPropertiesFile {
         }
     }
 
+    /** A line's value as the file holds it now, or null when the line is missing. */
+    String get(String name) {
+        return properties.getProperty(name);
+    }
+
     /** Sets a line; the file changes only when the value differs or the line is missing. */
     void set(String name, String value) {
         if (!value.equals(properties.getProperty(name))) {

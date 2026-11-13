@@ -18,8 +18,8 @@ public class SomePackDefaultsMod {
 
     private static final Logger LOGGER = LogManager.getLogger(Tags.MOD_ID);
 
-    private final ServerLinePhase serverLines = new ServerLinePhase(LOGGER, WorldPhase.vanillaGamerules());
-    private final WorldPhase world = new WorldPhase(LOGGER);
+    private final ServerLinePhase serverLines = new ServerLinePhase(LOGGER, WorldPhase.vanillaGamerules(), Tags.VERSION);
+    private final WorldPhase world = new WorldPhase(LOGGER, serverLines::onFirstTickSucceeded);
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
