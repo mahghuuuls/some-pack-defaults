@@ -5,6 +5,7 @@ import com.mahghuuuls.somepackdefaults.config.SettingCategory;
 import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
+import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
 import org.apache.logging.log4j.LogManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 
@@ -57,8 +59,104 @@ class ServerLinePhaseTest {
         Files.write(config.resolve(file), text.getBytes(StandardCharsets.UTF_8));
     }
 
-    private void run() {
-        new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test")).apply(new EntryFiles(config));
+    private ServerLinePhase run() {
+        ServerLinePhase phase = new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test"));
+        phase.apply(new EntryFiles(config));
+        return phase;
+    }
+
+    /** A world-type registry that knows exactly the given names, matched as the game matches them. */
+    private static WorldTypeLookup knowing(final String... names) {
+        return new WorldTypeLookup() {
+            @Override
+            public boolean isKnown(String name) {
+                for (String known : names) {
+                    if (known.equalsIgnoreCase(name)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            @Override
+            public List<String> knownNames() {
+                return Arrays.asList(names);
+            }
+        };
+    }
+
+    @Test
+    void aKnownWorldTypeKeepsTheWrittenLines() throws IOException {
+        Files.write(serverProperties, "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1));
+        entries("server-reapply.properties", "motd=Pack Server\nlevel-type=RTG\n");
+        run().checkWorldType(knowing("default", "flat", "rtg"));
+        assertNull(blocker.stoppedWith);
+        assertEquals("RTG", readServerProperties().getProperty("level-type"));
+        assertEquals("Pack Server", readServerProperties().getProperty("motd"));
+    }
+
+    @Test
+    void anUnknownWorldTypeRestoresTheFileAndStops() throws IOException {
+        byte[] before = "motd=Old\nlevel-type=DEFAULT\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        entries("server-reapply.properties", "motd=Pack Server\nlevel-type=NOSUCH\n");
+        ServerLinePhase phase = run();
+        assertEquals("NOSUCH", readServerProperties().getProperty("level-type"));
+        phase.checkWorldType(knowing("default", "flat"));
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertEquals(1, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("server-reapply.properties line 2: level-type=NOSUCH: no installed mod"),
+                blocker.stoppedWith.get(0).message());
+        assertEquals("server lines: 0 applied, 0 skipped, 2 not applied, 1 error", report.summaryLines(SettingCategory.SERVER_LINE).get(0));
+    }
+
+    @Test
+    void anUnknownWorldTypeAlreadyInTheFileIsRestoredOverVanillasOwnResave() throws IOException {
+        byte[] before = "motd=Old\nlevel-type=NOSUCH\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        entries("server-reapply.properties", "level-type=NOSUCH\n");
+        ServerLinePhase phase = run();
+        // Vanilla reads the file after pre-initialization and saves it again with its own defaults.
+        Files.write(serverProperties, "#Minecraft server properties\nmotd=Old\nlevel-type=NOSUCH\npvp=true\n".getBytes(StandardCharsets.ISO_8859_1));
+        phase.checkWorldType(knowing("default"));
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertEquals(1, blocker.stoppedWith.size());
+    }
+
+    @Test
+    void aFailingRegistryStillStopsAndRestores() throws IOException {
+        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        entries("server-reapply.properties", "level-type=RTG\n");
+        ServerLinePhase phase = run();
+        phase.checkWorldType(new WorldTypeLookup() {
+            @Override
+            public boolean isKnown(String name) {
+                throw new NoSuchMethodError("client-only method");
+            }
+
+            @Override
+            public List<String> knownNames() {
+                return Arrays.asList();
+            }
+        });
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertTrue(blocker.stoppedWith.get(0).message().contains("could not be checked"), blocker.stoppedWith.get(0).message());
+    }
+
+    @Test
+    void anUnknownWorldTypeOnANewServerRemovesTheFileItCreated() throws IOException {
+        entries("server-reapply.properties", "level-type=NOSUCH\n");
+        run().checkWorldType(knowing("default"));
+        assertFalse(Files.exists(serverProperties));
+        assertEquals(1, blocker.stoppedWith.size());
+    }
+
+    @Test
+    void withoutALevelTypeEntryNothingIsChecked() throws IOException {
+        entries("server-reapply.properties", "motd=Pack Server\n");
+        run().checkWorldType(knowing());
+        assertNull(blocker.stoppedWith);
     }
 
     private Properties readServerProperties() throws IOException {

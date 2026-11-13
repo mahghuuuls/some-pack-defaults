@@ -57,11 +57,12 @@ final class ServerPropertiesFile {
         }
     }
 
-    /** Puts the file back exactly as it was before {@link #save()}, or removes it when there was none. */
+    /**
+     * Puts the file back exactly as it was when it was opened, or removes it when there was none.
+     * This writes even when this class changed nothing: vanilla re-saves the file itself between
+     * pre-initialization and post-initialization.
+     */
     void restore() throws IOException {
-        if (!changed) {
-            return;
-        }
         if (snapshot == null) {
             Files.deleteIfExists(path);
         } else {

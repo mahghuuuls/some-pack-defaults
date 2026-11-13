@@ -10,6 +10,9 @@ import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
 import com.mahghuuuls.somepackdefaults.rules.EntryChecker;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
+import com.mahghuuuls.somepackdefaults.rules.ServerLineTable;
+import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
+import net.minecraftforge.fml.common.event.FMLPostInitializationEvent;
 import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.Logger;
 
@@ -34,6 +37,8 @@ public final class ServerLinePhase {
     private final Logger logger;
 
     private ServerPropertiesFile written;
+    /** The {@code level-type} entry this start wrote, checked later against the registered world types. */
+    private Entry writtenLevelType;
 
     public ServerLinePhase(Logger logger) {
         // Vanilla reads server.properties from the server's working folder.
@@ -84,22 +89,60 @@ public final class ServerLinePhase {
         for (Entry entry : set.entries(SettingCategory.SERVER_LINE, Mode.REAPPLY)) {
             written.set(entry.name(), entry.value());
             report.applied(entry);
+            if (entry.name().equals(ServerLineTable.LEVEL_TYPE)) {
+                writtenLevelType = entry;
+            }
         }
         try {
             written.save();
         } catch (IOException e) {
-            restoreAfterFailedWrite();
+            restore("a failed write");
             stop(Collections.singletonList(new Problem(serverProperties.toString(), 0, null, "could not be written (" + e + ")", null)));
             return;
         }
         report.log(logger, SettingCategory.SERVER_LINE);
     }
 
-    private void restoreAfterFailedWrite() {
+    /**
+     * Checks a written {@code level-type} once every mod has registered its world types. This runs
+     * at post-initialization, which still comes before the server reads the line. When the type is
+     * unknown, {@code server.properties} goes back to how it was before this start and the server stops.
+     */
+    public void onPostInit(FMLPostInitializationEvent event) {
+        if (event.getSide().isServer()) {
+            checkWorldType(new MinecraftWorldTypes());
+        }
+    }
+
+    void checkWorldType(WorldTypeLookup worldTypes) {
+        Entry levelType = writtenLevelType;
+        if (levelType == null) {
+            written = null;
+            return;
+        }
+        Problem problem;
+        try {
+            problem = EntryChecker.checkWorldType(levelType, worldTypes);
+        } catch (RuntimeException | LinkageError e) {
+            // The registry is the game's; a failure there must still stop cleanly and undo the write.
+            problem = new Problem(levelType.fileName(), levelType.lineNumber(), levelType.text(),
+                    "the world type could not be checked (" + e + ")", "a registered world type");
+        }
+        if (problem == null) {
+            written = null;
+            writtenLevelType = null;
+            return;
+        }
+        restore("an unknown world type");
+        report.undoApplied(SettingCategory.SERVER_LINE, "undone, server.properties is back as it was before this start");
+        stop(Collections.singletonList(problem));
+    }
+
+    private void restore(String reason) {
         try {
             written.restore();
         } catch (IOException e) {
-            logger.error(StartReport.PREFIX + "could not restore {} after a failed write", serverProperties, e);
+            logger.error(StartReport.PREFIX + "could not restore {} after {}", serverProperties, reason, e);
         }
     }
 

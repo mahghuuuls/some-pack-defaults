@@ -76,6 +76,16 @@ public final class StartReport {
         statuses.add(new Status(entry, Outcome.NOT_APPLIED, reason));
     }
 
+    /** Marks every applied entry of a category as not applied, after its write was undone. */
+    public void undoApplied(SettingCategory category, String reason) {
+        for (int i = 0; i < statuses.size(); i++) {
+            Status status = statuses.get(i);
+            if (status.entry().category() == category && status.outcome() == Outcome.APPLIED) {
+                statuses.set(i, new Status(status.entry(), Outcome.NOT_APPLIED, reason));
+            }
+        }
+    }
+
     public void problems(SettingCategory category, List<Problem> found) {
         problemList(category).addAll(found);
     }

@@ -80,6 +80,30 @@ class EntryCheckerTest {
         assertEquals("server-reapply.properties line 7: =false: not a name=value line. Allowed: name=value, as in server.properties.", problems.get(0).message());
     }
 
+    private static final WorldTypeLookup VANILLA_AND_RTG = new WorldTypeLookup() {
+        @Override
+        public boolean isKnown(String name) {
+            return knownNames().contains(name.toLowerCase(java.util.Locale.ROOT));
+        }
+
+        @Override
+        public List<String> knownNames() {
+            return Arrays.asList("default", "flat", "largebiomes", "amplified", "rtg");
+        }
+    };
+
+    @Test
+    void worldTypeKnownToTheGamePasses() {
+        assertEquals(null, EntryChecker.checkWorldType(server(Mode.REAPPLY, "level-type", "RTG", 3), VANILLA_AND_RTG));
+    }
+
+    @Test
+    void unknownWorldTypeNamesTheRegisteredTypes() {
+        Problem problem = EntryChecker.checkWorldType(server(Mode.REAPPLY, "level-type", "NOSUCH", 3), VANILLA_AND_RTG);
+        assertEquals("server-reapply.properties line 3: level-type=NOSUCH: no installed mod or Minecraft itself has this world type. "
+                + "Allowed: a registered world type: default, flat, largebiomes, amplified, rtg.", problem.message());
+    }
+
     @Test
     void gameruleEntriesAreNotPartOfTheServerLineCheck() {
         Entry gamerule = new Entry(SettingCategory.GAMERULE, Mode.REAPPLY, "pvp", "banana", 1);

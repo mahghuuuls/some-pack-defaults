@@ -49,6 +49,19 @@ public final class EntryChecker {
         return problems;
     }
 
+    /**
+     * Checks that a {@code level-type} entry names a world type the game knows. Vanilla would make
+     * a normal world without a word when the name is unknown, so an unknown name is refused.
+     * Returns null when the type is known.
+     */
+    public static Problem checkWorldType(Entry levelType, WorldTypeLookup worldTypes) {
+        if (worldTypes.isKnown(levelType.value())) {
+            return null;
+        }
+        return new Problem(levelType.fileName(), levelType.lineNumber(), levelType.text(), "no installed mod or Minecraft itself has this world type",
+                "a registered world type: " + String.join(", ", worldTypes.knownNames()));
+    }
+
     /** A name may appear once per setting category: once in one file, never in both. */
     static List<Problem> repeatedNames(EntrySet set, SettingCategory category) {
         List<Problem> problems = new ArrayList<Problem>();
