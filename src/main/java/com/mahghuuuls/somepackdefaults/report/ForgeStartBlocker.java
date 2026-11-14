@@ -9,6 +9,7 @@ import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.StartupQuery;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.PlayerEvent;
+import net.minecraftforge.fml.common.gameevent.TickEvent;
 import org.apache.logging.log4j.Logger;
 
 import java.util.List;
@@ -28,6 +29,16 @@ public final class ForgeStartBlocker implements StartBlocker {
     private String pendingMessage;
     /** The integrated server that stop belongs to, so it never reaches a later world. */
     private MinecraftServer pendingServer;
+    /**
+     * Server ticks the disconnect waits after the host's login: three seconds. A disconnect that
+     * reaches the client before it has handled the join-game packet leaves the client stuck in its
+     * join with no message; there is no public server-side signal that the client has joined, so a
+     * fixed wait covers it, and a client that stalls longer than this while joining can still lose.
+     */
+    private static final int DISCONNECT_DELAY_TICKS = 60;
+    /** The host who logged in to the stopped world, waiting for the disconnect. */
+    private EntityPlayerMP pendingPlayer;
+    private int ticksUntilDisconnect;
 
     public ForgeStartBlocker(Logger logger) {
         this.logger = logger;
@@ -43,9 +54,10 @@ public final class ForgeStartBlocker implements StartBlocker {
      * On a dedicated server, uses Forge's start-up query: the message goes to the log, and the
      * abort ends the start; the server's run loop catches it, saves the unchanged world, and stops.
      * In singleplayer that query cannot be answered once the world has loaded (only the client's
-     * world-loading wait answers it), so the stop waits for the player's login and disconnects the
-     * player with the message; leaving the world stops the integrated server, which saves the
-     * unchanged world, and the client shows the message with a button back to the menu.
+     * world-loading wait answers it), so the stop waits for the player's login and, a few seconds
+     * later, disconnects the player with the message; leaving the world stops the integrated
+     * server, which saves the unchanged world, and the client shows the message with a button back
+     * to the menu.
      */
     @Override
     public void stopAfterWorldLoad(List<Problem> problems) {
@@ -63,8 +75,11 @@ public final class ForgeStartBlocker implements StartBlocker {
         }
         MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
         if (server != null && !server.isDedicatedServer()) {
+            // A newer stop replaces any older one still waiting, whoever its player was.
             pendingMessage = text.toString();
             pendingServer = server;
+            pendingPlayer = null;
+            ticksUntilDisconnect = 0;
             MinecraftForge.EVENT_BUS.register(this);
             return;
         }
@@ -74,19 +89,47 @@ public final class ForgeStartBlocker implements StartBlocker {
 
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        if (pendingMessage == null || !(event.player instanceof EntityPlayerMP)) {
+        if (pendingMessage == null || pendingPlayer != null || !(event.player instanceof EntityPlayerMP)) {
             return;
         }
+        if (((EntityPlayerMP) event.player).getServer() != pendingServer) {
+            // The world that was stopped ended before its player joined; this is another world.
+            clearPending();
+            return;
+        }
+        // A disconnect inside the login can reach the client before it has handled the join-game
+        // packet; the client then fails in its join and never shows the message. Wait, so the
+        // client is in the world when the disconnect arrives.
+        pendingPlayer = (EntityPlayerMP) event.player;
+        ticksUntilDisconnect = DISCONNECT_DELAY_TICKS;
+    }
+
+    @SubscribeEvent
+    public void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END || pendingPlayer == null) {
+            return;
+        }
+        if (FMLCommonHandler.instance().getMinecraftServerInstance() != pendingServer) {
+            // The stopped world's server ended during the wait; nothing is left to disconnect.
+            clearPending();
+            return;
+        }
+        if (--ticksUntilDisconnect > 0) {
+            return;
+        }
+        EntityPlayerMP player = pendingPlayer;
         String message = pendingMessage;
-        MinecraftServer stoppedServer = pendingServer;
+        clearPending();
+        if (player.connection.getNetworkManager().isChannelOpen()) {
+            logger.info(StartReport.PREFIX + "disconnecting {} with the configuration errors", player.getName());
+            player.connection.disconnect(new TextComponentString(message));
+        }
+    }
+
+    private void clearPending() {
         pendingMessage = null;
         pendingServer = null;
+        pendingPlayer = null;
         MinecraftForge.EVENT_BUS.unregister(this);
-        if (((EntityPlayerMP) event.player).getServer() != stoppedServer) {
-            // The world that was stopped ended before its player joined; this is another world.
-            return;
-        }
-        logger.info(StartReport.PREFIX + "disconnecting {} with the configuration errors", event.player.getName());
-        ((EntityPlayerMP) event.player).connection.disconnect(new TextComponentString(message));
     }
 }
