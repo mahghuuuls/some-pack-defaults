@@ -28,6 +28,10 @@ public final class StartReport {
         Outcome(String label) {
             this.label = label;
         }
+
+        String label() {
+            return label;
+        }
     }
 
     /** One entry's outcome and the reason, when there is one. */
