@@ -145,11 +145,34 @@ public final class WorldPhase {
         if (set == null) {
             return;
         }
+        List<Problem> problems = EntryChecker.checkServerLines(set);
         for (Entry entry : set.entries(SettingCategory.SERVER_LINE)) {
-            report.notApplied(entry, "not used in singleplayer");
+            if (hasProblem(entry, problems, set)) {
+                report.error(entry);
+            } else {
+                report.notApplied(entry, "not used in singleplayer");
+            }
         }
-        report.problems(SettingCategory.SERVER_LINE, EntryChecker.checkServerLines(set));
+        report.problems(SettingCategory.SERVER_LINE, problems);
         report.log(logger, SettingCategory.SERVER_LINE);
+    }
+
+    /**
+     * True when a problem names this entry's line, or the entry's name is repeated in its file: a
+     * repeated name has one problem, at its later line, yet every one of its entries is invalid.
+     */
+    private static boolean hasProblem(Entry entry, List<Problem> problems, EntrySet set) {
+        for (Problem problem : problems) {
+            if (problem.fileName().equals(entry.fileName()) && problem.lineNumber() == entry.lineNumber()) {
+                return true;
+            }
+        }
+        for (Entry other : set.entries(entry.category())) {
+            if (other != entry && other.source() == entry.source() && other.name().equals(entry.name())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void readEntries() {

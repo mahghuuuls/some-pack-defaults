@@ -175,15 +175,34 @@ class WorldPhaseTest {
         assertEquals("false", world.values.get("doDaylightCycle"));
         assertEquals(1, phase.report().problems(SettingCategory.SERVER_LINE).size());
         assertTrue(phase.report().problems(SettingCategory.SERVER_LINE).get(0).message().startsWith("player.properties line 1: difficulty=hardd"));
-        int unused = 0;
+        List<StartReport.Status> statuses = new ArrayList<StartReport.Status>();
         for (StartReport.Status status : phase.report().statuses()) {
             if (status.entry().category() == SettingCategory.SERVER_LINE) {
-                assertEquals(StartReport.Outcome.NOT_APPLIED, status.outcome());
-                assertEquals("not used in singleplayer", status.reason());
-                unused++;
+                statuses.add(status);
             }
         }
-        assertEquals(2, unused);
+        assertEquals(2, statuses.size());
+        assertEquals("motd", statuses.get(0).entry().name());
+        assertEquals(StartReport.Outcome.NOT_APPLIED, statuses.get(0).outcome());
+        assertEquals("not used in singleplayer", statuses.get(0).reason());
+        assertEquals("difficulty", statuses.get(1).entry().name());
+        assertEquals(StartReport.Outcome.ERROR, statuses.get(1).outcome());
+        assertEquals("server lines: 0 applied, 0 overridden by the pack file, 1 not applied, 1 error",
+                phase.report().summaryLines(SettingCategory.SERVER_LINE).get(0));
+    }
+
+    @Test
+    void bothLinesOfARepeatedServerLineHaveTheErrorStatusInSingleplayer() {
+        EntrySet entries = set(new Entry(SettingCategory.SERVER_LINE, Source.PLAYER, "pvp", "false", 1),
+                new Entry(SettingCategory.SERVER_LINE, Source.PLAYER, "pvp", "true", 2),
+                new Entry(SettingCategory.SERVER_LINE, Source.PACK, "pvp", "false", 1));
+        phase.reportServerLinesInSingleplayer(entries);
+        List<StartReport.Outcome> outcomes = new ArrayList<StartReport.Outcome>();
+        for (StartReport.Status status : phase.report().statuses()) {
+            outcomes.add(status.outcome());
+        }
+        assertEquals(Arrays.asList(StartReport.Outcome.ERROR, StartReport.Outcome.ERROR, StartReport.Outcome.NOT_APPLIED), outcomes);
+        assertEquals(1, phase.report().problems(SettingCategory.SERVER_LINE).size());
     }
 
     @Test

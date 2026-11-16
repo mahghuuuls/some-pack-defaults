@@ -101,6 +101,14 @@ class InspectionLinesTest {
     }
 
     @Test
+    void anEntryWithAProblemHasTheErrorStatus() {
+        StartReport report = new StartReport();
+        report.error(line(Source.PLAYER, "difficulty", "hardd"));
+        assertEquals("server line difficulty (player.properties line 1): configured hardd; error",
+                InspectionLines.lines(Collections.singletonList(report), new Values(true)).get(1));
+    }
+
+    @Test
     void gamerulesShowTheWorldValueAndServerLinesComeFirst() {
         StartReport serverLines = new StartReport();
         serverLines.applied(line(Source.PACK, "motd", "Pack"));

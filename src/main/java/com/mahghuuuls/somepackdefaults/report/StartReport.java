@@ -23,7 +23,9 @@ public final class StartReport {
     public enum Outcome {
         APPLIED("applied"),
         OVERRIDDEN("overridden by the pack file"),
-        NOT_APPLIED("not applied");
+        NOT_APPLIED("not applied"),
+        /** An entry that has a problem; the problem itself is listed with the errors. */
+        ERROR("error");
 
         private final String label;
 
@@ -81,6 +83,11 @@ public final class StartReport {
 
     public void notApplied(Entry entry, String reason) {
         statuses.add(new Status(entry, Outcome.NOT_APPLIED, reason));
+    }
+
+    /** An entry whose problem is reported with {@link #problems}; used where a start goes on despite it. */
+    public void error(Entry entry) {
+        statuses.add(new Status(entry, Outcome.ERROR, null));
     }
 
     /** Marks every applied entry of a category as not applied, after its write was undone. */

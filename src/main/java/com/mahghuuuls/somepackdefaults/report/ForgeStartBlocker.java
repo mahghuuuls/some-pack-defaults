@@ -55,9 +55,9 @@ public final class ForgeStartBlocker implements StartBlocker {
      * abort ends the start; the server's run loop catches it, saves the unchanged world, and stops.
      * In singleplayer that query cannot be answered once the world has loaded (only the client's
      * world-loading wait answers it), so the stop waits for the player's login and, a few seconds
-     * later, disconnects the player with the message; leaving the world stops the integrated
-     * server, which saves the unchanged world, and the client shows the message with a button back
-     * to the menu.
+     * later, tells the integrated server to stop and disconnects the player with the message; the
+     * integrated server saves the unchanged world, and the client shows the message with a button
+     * back to the menu.
      */
     @Override
     public void stopAfterWorldLoad(List<Problem> problems) {
@@ -119,9 +119,20 @@ public final class ForgeStartBlocker implements StartBlocker {
         }
         EntityPlayerMP player = pendingPlayer;
         String message = pendingMessage;
+        MinecraftServer server = pendingServer;
         clearPending();
         if (player.connection.getNetworkManager().isChannelOpen()) {
             logger.info(StartReport.PREFIX + "disconnecting {} with the configuration errors", player.getName());
+            // Mark the server as stopping before the client learns of the disconnect. A client whose
+            // server still runs asks it for a last task and waits; a server that stops on the host's
+            // logout first never runs that task, and the client waits for ever.
+            try {
+                server.initiateShutdown();
+            } catch (RuntimeException e) {
+                // The integrated server's shutdown reads the client's player, which is missing while
+                // the client is still joining. The message must still reach the player.
+                logger.error(StartReport.PREFIX + "could not mark the world as stopping before the disconnect", e);
+            }
             player.connection.disconnect(new TextComponentString(message));
         }
     }
