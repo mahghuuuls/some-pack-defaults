@@ -22,9 +22,10 @@ public class SomePackDefaultsMod {
 
     private static final Logger LOGGER = LogManager.getLogger(Tags.MOD_ID);
 
-    private final ServerLinePhase serverLines = new ServerLinePhase(LOGGER, WorldPhase.vanillaGamerules(), Tags.VERSION);
-    private final WorldPhase world = new WorldPhase(LOGGER, serverLines::onFirstTickSucceeded);
+    private final ServerLinePhase serverLines = new ServerLinePhase(LOGGER, WorldPhase.vanillaGamerules());
+    private final WorldPhase world = new WorldPhase(LOGGER);
 
+    /** The world phase first: it creates missing files, which the server-line phase then reads. */
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         world.onPreInit(event);

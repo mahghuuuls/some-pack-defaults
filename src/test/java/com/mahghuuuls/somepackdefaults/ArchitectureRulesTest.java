@@ -16,7 +16,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Fails when a source file breaks the package rules: entry reading and checking stay free of
- * Minecraft and Forge so they can be tested directly (also by fully qualified names), nothing loads
+ * Minecraft and Forge so they can be tested directly (also by fully qualified names), config
+ * depends on nothing else in the mod (rules implements its name interface), nothing loads
  * client classes, only the stop implementation in report uses Forge, the root class reaches the mod
  * only through the three lifecycle packages, and those packages do not depend on each other.
  */
@@ -79,6 +80,10 @@ class ArchitectureRulesTest {
                 if ((pkg.equals("config") || pkg.equals("rules"))
                         && (imported.startsWith("net.minecraft") || imported.startsWith("net.minecraftforge"))) {
                     violations.add(source + " (" + pkg + ") imports " + imported);
+                }
+                if (pkg.equals("config") && imported.startsWith("com.mahghuuuls.somepackdefaults.")
+                        && !imported.startsWith("com.mahghuuuls.somepackdefaults.config.")) {
+                    violations.add(source + " (config) imports " + imported + "; config depends on nothing else in the mod");
                 }
                 if (pkg.equals("rules") && imported.startsWith("com.mahghuuuls.somepackdefaults.")
                         && !imported.startsWith("com.mahghuuuls.somepackdefaults.config.") && !imported.startsWith("com.mahghuuuls.somepackdefaults.rules.")) {

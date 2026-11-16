@@ -1,6 +1,8 @@
 package com.mahghuuuls.somepackdefaults.report;
 
 import com.mahghuuuls.somepackdefaults.config.Entry;
+import com.mahghuuuls.somepackdefaults.config.EntryFiles;
+import com.mahghuuuls.somepackdefaults.config.FileCreation;
 import com.mahghuuuls.somepackdefaults.config.SettingCategory;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import org.apache.logging.log4j.Logger;
@@ -20,7 +22,7 @@ public final class StartReport {
     /** What happened to one entry. */
     public enum Outcome {
         APPLIED("applied"),
-        SKIPPED("skipped"),
+        OVERRIDDEN("overridden by the pack file"),
         NOT_APPLIED("not applied");
 
         private final String label;
@@ -59,7 +61,7 @@ public final class StartReport {
         }
 
         String line() {
-            String text = entry.category().label() + " " + entry.text() + " (" + entry.mode().label() + ", " + entry.fileName()
+            String text = entry.category().label() + " " + entry.text() + " (" + entry.fileName()
                     + " line " + entry.lineNumber() + "): " + outcome.label;
             return reason == null ? text : text + ": " + reason;
         }
@@ -72,8 +74,9 @@ public final class StartReport {
         statuses.add(new Status(entry, Outcome.APPLIED, null));
     }
 
-    public void skipped(Entry entry, String reason) {
-        statuses.add(new Status(entry, Outcome.SKIPPED, reason));
+    /** A player entry whose setting the pack file also sets. */
+    public void overridden(Entry entry) {
+        statuses.add(new Status(entry, Outcome.OVERRIDDEN, null));
     }
 
     public void notApplied(Entry entry, String reason) {
@@ -111,6 +114,21 @@ public final class StartReport {
         return list;
     }
 
+    /** One log line per created file, naming where a new player file came from. */
+    public static List<String> creationLines(FileCreation creation) {
+        List<String> lines = new ArrayList<String>();
+        for (String file : creation.createdFiles()) {
+            if (!file.equals(EntryFiles.PLAYER_FILE)) {
+                lines.add("created " + file + " from its template");
+            } else if (creation.playerFileFromPackSuggestions()) {
+                lines.add("created " + file + " from the pack's " + EntryFiles.SUGGESTIONS_FILE);
+            } else {
+                lines.add("created " + file + " from the suggestions template (the pack ships no " + EntryFiles.SUGGESTIONS_FILE + ")");
+            }
+        }
+        return lines;
+    }
+
     /** The summary lines for one setting category: the counts, each entry's outcome, then each error. */
     public List<String> summaryLines(SettingCategory category) {
         List<String> lines = new ArrayList<String>();
@@ -142,8 +160,8 @@ public final class StartReport {
                 counts[status.outcome().ordinal()]++;
             }
         }
-        return category.label() + "s: " + counts[Outcome.APPLIED.ordinal()] + " applied, " + counts[Outcome.SKIPPED.ordinal()] + " skipped, "
-                + counts[Outcome.NOT_APPLIED.ordinal()] + " not applied, " + problemList(category).size()
+        return category.label() + "s: " + counts[Outcome.APPLIED.ordinal()] + " applied, " + counts[Outcome.OVERRIDDEN.ordinal()]
+                + " overridden by the pack file, " + counts[Outcome.NOT_APPLIED.ordinal()] + " not applied, " + problemList(category).size()
                 + (problemList(category).size() == 1 ? " error" : " errors");
     }
 

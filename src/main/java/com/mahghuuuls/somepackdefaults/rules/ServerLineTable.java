@@ -1,5 +1,7 @@
 package com.mahghuuuls.somepackdefaults.rules;
 
+import com.mahghuuuls.somepackdefaults.config.NameKinds;
+
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -12,13 +14,17 @@ import java.util.Set;
  * which ones belong to the server host. Ranges follow how {@code DedicatedServer},
  * {@code DedicatedPlayerList}, and {@code PlayerChunkMap} read each line, so a value passes only
  * when the server uses it as written. {@code op-permission-level} is limited to 1 to 4, the levels
- * the game defines. This table is the authoritative list of pack lines and their values.
+ * the game defines. This table is the authoritative list of pack lines and their values, and so
+ * of which names are server lines; every other name is a gamerule.
  */
-public final class ServerLineTable {
+public final class ServerLineTable implements NameKinds {
+
+    /** The table as the files' {@link NameKinds}. */
+    public static final ServerLineTable NAME_KINDS = new ServerLineTable();
 
     /** The line whose value is a world type; its existence is checked once every mod has registered its types. */
     public static final String LEVEL_TYPE = "level-type";
-    /** The line that names the world folder; it decides which worlds count for initial server setup. */
+    /** The line that names the world folder; only the player file may set it. */
     public static final String LEVEL_NAME = "level-name";
 
     private static final List<String> HOST_LINES = Collections.unmodifiableList(Arrays.asList(
@@ -68,6 +74,12 @@ public final class ServerLineTable {
     }
 
     private ServerLineTable() {
+    }
+
+    /** Host lines count as server lines, so an entry for one is refused as a host line, not as an unknown gamerule. */
+    @Override
+    public boolean isServerLine(String name) {
+        return isHostLine(name) || isPackLine(name);
     }
 
     public static boolean isHostLine(String name) {

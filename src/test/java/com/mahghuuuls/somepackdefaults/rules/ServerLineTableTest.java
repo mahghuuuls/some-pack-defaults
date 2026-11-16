@@ -57,6 +57,19 @@ class ServerLineTableTest {
     }
 
     @Test
+    void packLinesAndHostLinesAreServerLinesAndEveryOtherNameIsAGamerule() {
+        for (String name : ServerLineTable.packLineNames()) {
+            assertTrue(ServerLineTable.NAME_KINDS.isServerLine(name), name);
+        }
+        for (String host : ServerLineTable.hostLineNames()) {
+            assertTrue(ServerLineTable.NAME_KINDS.isServerLine(host), host);
+        }
+        for (String other : new String[] {"keepInventory", "doDaylightCycle", "defaultworldgenerator-port", "Pvp"}) {
+            assertFalse(ServerLineTable.NAME_KINDS.isServerLine(other), other);
+        }
+    }
+
+    @Test
     void everyBooleanLineTakesTrueOrFalseOnly() {
         for (String name : BOOLEAN_LINES) {
             accepts(name, "true");

@@ -3,12 +3,12 @@ package com.mahghuuuls.somepackdefaults.server;
 import com.mahghuuuls.somepackdefaults.config.Entry;
 import com.mahghuuuls.somepackdefaults.config.EntryFiles;
 import com.mahghuuuls.somepackdefaults.config.EntrySet;
-import com.mahghuuuls.somepackdefaults.config.Mode;
 import com.mahghuuuls.somepackdefaults.config.SettingCategory;
 import com.mahghuuuls.somepackdefaults.report.ForgeStartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
 import com.mahghuuuls.somepackdefaults.rules.EntryChecker;
+import com.mahghuuuls.somepackdefaults.rules.EntryResolution;
 import com.mahghuuuls.somepackdefaults.rules.GameruleLookup;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import com.mahghuuuls.somepackdefaults.rules.ServerLineTable;
@@ -20,20 +20,17 @@ import org.apache.logging.log4j.Logger;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 
 /**
  * The server-line side of a dedicated-server start. It acts only on a dedicated server, at
  * pre-initialization, before vanilla reads {@code server.properties}, so every line it writes takes
- * effect on this same start. It checks every server-line entry first and writes nothing when any is
- * invalid. It decides whether this is initial server setup: then Default and Reapply lines are
- * written together; otherwise only Reapply lines. The instance lives for the whole start and keeps
- * the file it wrote, so a later check can undo the write, and writes the setup record once the
- * start has succeeded.
+ * effect on this same start. It checks every entry that can be checked before a world loads and
+ * writes nothing when any is invalid; otherwise it writes every effective server line, at every
+ * start. The instance lives for the whole start and keeps the file it wrote, so a later check can
+ * undo the write.
  */
 public final class ServerLinePhase {
 
@@ -43,32 +40,25 @@ public final class ServerLinePhase {
     private final Logger logger;
     /** The gamerules every vanilla world has, so their values are checked before any world loads. */
     private final GameruleLookup vanillaGamerules;
-    private final WorldFolders worlds;
-    private final SetupRecord record;
-    private final String modVersion;
 
     private ServerPropertiesFile written;
-    /** The {@code level-type} entry this start wrote, checked later against the registered world types. */
-    private Entry writtenLevelType;
-    /** True when this start found no setup record and must write one once it succeeds. */
-    private boolean recordPending;
+    /**
+     * The {@code level-type} entries of both files, checked later against the registered world
+     * types; an overridden player entry is checked too, as every other player entry is.
+     */
+    private final List<Entry> levelTypes = new ArrayList<Entry>();
 
-    public ServerLinePhase(Logger logger, GameruleLookup vanillaGamerules, String modVersion) {
+    public ServerLinePhase(Logger logger, GameruleLookup vanillaGamerules) {
         // Vanilla reads server.properties from the server's working folder.
-        this(Paths.get("server.properties"), new StartReport(), new ForgeStartBlocker(logger), logger, vanillaGamerules,
-                new MinecraftWorldFolders(), modVersion);
+        this(Paths.get("server.properties"), new StartReport(), new ForgeStartBlocker(logger), logger, vanillaGamerules);
     }
 
-    ServerLinePhase(Path serverProperties, StartReport report, StartBlocker blocker, Logger logger, GameruleLookup vanillaGamerules,
-            WorldFolders worlds, String modVersion) {
+    ServerLinePhase(Path serverProperties, StartReport report, StartBlocker blocker, Logger logger, GameruleLookup vanillaGamerules) {
         this.serverProperties = serverProperties;
         this.report = report;
         this.blocker = blocker;
         this.logger = logger;
         this.vanillaGamerules = vanillaGamerules;
-        this.worlds = worlds;
-        this.record = SetupRecord.besides(serverProperties);
-        this.modVersion = modVersion;
     }
 
     public StartReport report() {
@@ -79,13 +69,14 @@ public final class ServerLinePhase {
         if (!event.getSide().isServer()) {
             return;
         }
-        apply(EntryFiles.inConfigFolder(event.getModConfigurationDirectory().toPath()));
+        apply(EntryFiles.inConfigFolder(event.getModConfigurationDirectory().toPath(), ServerLineTable.NAME_KINDS));
     }
 
     /**
-     * Checks every entry that can be checked before a world loads (all server lines, and gamerule
-     * entries that name a vanilla gamerule), then writes the server lines; or stops the server with
-     * every problem found and writes nothing.
+     * Checks every entry that can be checked before a world loads (all lines and server lines, and
+     * gamerule entries that name a vanilla gamerule), then writes the effective server lines; or
+     * stops the server with every problem found and writes nothing. The world phase has created
+     * missing files before this runs.
      */
     void apply(EntryFiles files) {
         EntrySet set;
@@ -95,7 +86,8 @@ public final class ServerLinePhase {
             stop(Collections.singletonList(new Problem(files.folder().toString(), 0, null, "could not be read (" + e + ")", null)));
             return;
         }
-        List<Problem> problems = EntryChecker.checkServerLines(set);
+        List<Problem> problems = EntryChecker.checkLines(set);
+        problems.addAll(EntryChecker.checkServerLines(set));
         List<Problem> gameruleProblems = EntryChecker.checkGamerulesBeforeLoad(set, vanillaGamerules);
         if (!problems.isEmpty() || !gameruleProblems.isEmpty()) {
             report.problems(SettingCategory.GAMERULE, gameruleProblems);
@@ -113,17 +105,17 @@ public final class ServerLinePhase {
             stop(Collections.singletonList(new Problem(serverProperties.toString(), 0, null, "could not be read: " + e.getMessage(), null)));
             return;
         }
-        SetupDecision.State setup = decideSetup(set);
-        recordPending = setup != SetupDecision.State.EXISTING_SETUP;
-        for (Entry entry : set.entries(SettingCategory.SERVER_LINE, Mode.DEFAULT)) {
-            if (setup == SetupDecision.State.INITIAL) {
-                write(entry);
-            } else {
-                report.skipped(entry, setup.skipReason());
+        for (Entry entry : set.entries(SettingCategory.SERVER_LINE)) {
+            if (entry.name().equals(ServerLineTable.LEVEL_TYPE)) {
+                levelTypes.add(entry);
             }
         }
-        for (Entry entry : set.entries(SettingCategory.SERVER_LINE, Mode.REAPPLY)) {
+        EntryResolution resolution = EntryResolution.of(set);
+        for (Entry entry : resolution.effective(SettingCategory.SERVER_LINE)) {
             write(entry);
+        }
+        for (Entry entry : resolution.overridden(SettingCategory.SERVER_LINE)) {
+            report.overridden(entry);
         }
         try {
             written.save();
@@ -135,68 +127,13 @@ public final class ServerLinePhase {
         report.log(logger, SettingCategory.SERVER_LINE);
     }
 
-    /** Applies the setup rule to this start's facts and logs the outcome with the facts behind it. */
-    private SetupDecision.State decideSetup(EntrySet set) {
-        boolean recordExists = record.exists();
-        Set<String> names = SetupDecision.worldNames(written.get(ServerLineTable.LEVEL_NAME),
-                levelName(set, Mode.DEFAULT), levelName(set, Mode.REAPPLY), worlds.startOptionWorldName());
-        String existingWorld = null;
-        for (String name : names) {
-            if (worlds.hasLevelDat(name)) {
-                existingWorld = name;
-                break;
-            }
-        }
-        SetupDecision.State setup = SetupDecision.decide(recordExists, existingWorld != null);
-        if (setup == SetupDecision.State.INITIAL) {
-            logger.info(StartReport.PREFIX + "initial server setup: no setup record and no world among {}", names);
-        } else if (setup == SetupDecision.State.EXISTING_SETUP) {
-            logger.info(StartReport.PREFIX + "existing setup: the setup record {} exists", record.path());
-        } else {
-            logger.info(StartReport.PREFIX + "existing setup: the world {} already exists (it has level.dat)", existingWorld);
-        }
-        return setup;
-    }
-
-    private static Entry levelName(EntrySet set, Mode mode) {
-        Entry found = null;
-        for (Entry entry : set.entries(SettingCategory.SERVER_LINE, mode)) {
-            if (entry.name().equals(ServerLineTable.LEVEL_NAME)) {
-                found = entry;
-            }
-        }
-        return found;
-    }
-
     private void write(Entry entry) {
         written.set(entry.name(), entry.value());
         report.applied(entry);
-        if (entry.name().equals(ServerLineTable.LEVEL_TYPE)) {
-            writtenLevelType = entry;
-        }
     }
 
     /**
-     * Called once this start's first server tick has succeeded. When the start found no setup record,
-     * writes it now, so the next start counts as an existing setup. A stopped start never gets here.
-     * Does nothing in singleplayer, where this phase never ran.
-     */
-    public void onFirstTickSucceeded() {
-        if (!recordPending) {
-            return;
-        }
-        recordPending = false;
-        try {
-            if (record.writeIfAbsent(Instant.now(), modVersion)) {
-                logger.info(StartReport.PREFIX + "wrote the setup record {}; later starts count as an existing setup", record.path());
-            }
-        } catch (IOException e) {
-            logger.error(StartReport.PREFIX + "could not write the setup record {}; the next start decides the setup again", record.path(), e);
-        }
-    }
-
-    /**
-     * Checks a written {@code level-type} once every mod has registered its world types. This runs
+     * Checks the {@code level-type} entries once every mod has registered its world types. This runs
      * at post-initialization, which still comes before the server reads the line. When the type is
      * unknown, {@code server.properties} goes back to how it was before this start and the server stops.
      */
@@ -207,28 +144,27 @@ public final class ServerLinePhase {
     }
 
     void checkWorldType(WorldTypeLookup worldTypes) {
-        Entry levelType = writtenLevelType;
-        if (levelType == null) {
-            written = null;
-            return;
+        List<Problem> problems = new ArrayList<Problem>();
+        for (Entry levelType : levelTypes) {
+            try {
+                Problem problem = EntryChecker.checkWorldType(levelType, worldTypes);
+                if (problem != null) {
+                    problems.add(problem);
+                }
+            } catch (RuntimeException | LinkageError e) {
+                // The registry is the game's; a failure there must still stop cleanly and undo the write.
+                problems.add(new Problem(levelType.fileName(), levelType.lineNumber(), levelType.text(),
+                        "the world type could not be checked (" + e + ")", "a registered world type"));
+            }
         }
-        Problem problem;
-        try {
-            problem = EntryChecker.checkWorldType(levelType, worldTypes);
-        } catch (RuntimeException | LinkageError e) {
-            // The registry is the game's; a failure there must still stop cleanly and undo the write.
-            problem = new Problem(levelType.fileName(), levelType.lineNumber(), levelType.text(),
-                    "the world type could not be checked (" + e + ")", "a registered world type");
-        }
-        if (problem == null) {
+        levelTypes.clear();
+        if (problems.isEmpty()) {
             written = null;
-            writtenLevelType = null;
             return;
         }
         restore("an unknown world type");
-        recordPending = false;
         report.undoApplied(SettingCategory.SERVER_LINE, "undone, server.properties is back as it was before this start");
-        stop(Collections.singletonList(problem));
+        stop(problems);
     }
 
     private void restore(String reason) {

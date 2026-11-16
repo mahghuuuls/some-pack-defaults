@@ -1,14 +1,13 @@
 package com.mahghuuuls.somepackdefaults.server;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.mahghuuuls.somepackdefaults.config.EntryFiles;
-import com.mahghuuuls.somepackdefaults.config.Mode;
 import com.mahghuuuls.somepackdefaults.config.SettingCategory;
+import com.mahghuuuls.somepackdefaults.config.Source;
 import com.mahghuuuls.somepackdefaults.report.StartBlocker;
 import com.mahghuuuls.somepackdefaults.report.StartReport;
 import com.mahghuuuls.somepackdefaults.rules.GameruleLookup;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
+import com.mahghuuuls.somepackdefaults.rules.ServerLineTable;
 import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
 import org.apache.logging.log4j.LogManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,11 +19,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -57,95 +57,6 @@ class ServerLinePhaseTest {
         }
     }
 
-    @BeforeEach
-    void setUp() throws IOException {
-        config = dir.resolve("config").resolve("somepackdefaults");
-        serverProperties = dir.resolve("server.properties");
-        new EntryFiles(config).createMissingFiles();
-        report = new StartReport();
-        blocker = new RecordingBlocker();
-    }
-
-    private void entries(String file, String text) throws IOException {
-        Files.write(config.resolve(file), text.getBytes(StandardCharsets.UTF_8));
-    }
-
-    private ServerLinePhase run() {
-        WorldFolders worlds = new WorldFolders() {
-            @Override
-            public boolean hasLevelDat(String levelName) {
-                return Files.isRegularFile(dir.resolve(levelName).resolve("level.dat"));
-            }
-
-            @Override
-            public String startOptionWorldName() {
-                return startOptionWorld;
-            }
-        };
-        ServerLinePhase phase = new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test"), VANILLA_GAMERULES,
-                worlds, "9.9.9");
-        phase.apply(new EntryFiles(config));
-        return phase;
-    }
-
-    /** The world name a {@code --world} start option gave, or null. */
-    private String startOptionWorld;
-
-    @Test
-    void theWorldOfTheWorldStartOptionCounts() throws IOException {
-        Files.write(serverProperties, "level-name=world\nmotd=Admin Server\n".getBytes(StandardCharsets.ISO_8859_1));
-        world("myworld");
-        startOptionWorld = "myworld";
-        entries("server-default.properties", "motd=Pack Server\n");
-        run();
-        assertEquals("Admin Server", readServerProperties().getProperty("motd"));
-        assertDefaultSkipped("the world already exists");
-    }
-
-    @Test
-    void aFailedLevelTypeCheckLeavesNoRecordPending() throws IOException {
-        entries("server-default.properties", "level-type=NOSUCH\n");
-        ServerLinePhase phase = run();
-        phase.checkWorldType(knowing("default"));
-        phase.onFirstTickSucceeded();
-        assertFalse(Files.exists(record()));
-    }
-
-    private Path record() {
-        return dir.resolve("somepackdefaults-setup.json");
-    }
-
-    private void world(String name) throws IOException {
-        Files.createDirectories(dir.resolve(name));
-        Files.write(dir.resolve(name).resolve("level.dat"), new byte[] {1});
-    }
-
-    private void existingRecord() throws IOException {
-        Files.write(record(), "{\"format\":1}\n".getBytes(StandardCharsets.UTF_8));
-    }
-
-    private List<StartReport.Status> serverLineStatuses() {
-        List<StartReport.Status> result = new ArrayList<StartReport.Status>();
-        for (StartReport.Status status : report.statuses()) {
-            if (status.entry().category() == SettingCategory.SERVER_LINE) {
-                result.add(status);
-            }
-        }
-        return result;
-    }
-
-    private void assertDefaultSkipped(String reason) {
-        boolean found = false;
-        for (StartReport.Status status : serverLineStatuses()) {
-            if (status.entry().mode() == Mode.DEFAULT) {
-                assertEquals(StartReport.Outcome.SKIPPED, status.outcome(), status.entry().text());
-                assertEquals(reason, status.reason());
-                found = true;
-            }
-        }
-        assertTrue(found, "no Default server line in the report");
-    }
-
     private static final GameruleLookup VANILLA_GAMERULES = new GameruleLookup() {
         @Override
         public Kind kindOf(String name) {
@@ -153,17 +64,60 @@ class ServerLinePhaseTest {
         }
     };
 
-    @Test
-    void aBadVanillaGameruleStopsBeforeAnyServerLineIsWrittenAndBothKindsAreReported() throws IOException {
-        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
-        Files.write(serverProperties, before);
-        entries("server-reapply.properties", "motd=Pack Server\npvp=maybe\n");
-        entries("gamerules-reapply.properties", "keepInventory=yes\nmodRule=anything\n");
-        run();
-        assertArrayEquals(before, Files.readAllBytes(serverProperties));
-        assertEquals(2, blocker.stoppedWith.size());
-        assertTrue(blocker.stoppedWith.get(0).message().startsWith("server-reapply.properties line 2: pvp=maybe"), blocker.stoppedWith.get(0).message());
-        assertTrue(blocker.stoppedWith.get(1).message().startsWith("gamerules-reapply.properties line 1: keepInventory=yes"), blocker.stoppedWith.get(1).message());
+    @BeforeEach
+    void setUp() {
+        config = dir.resolve("config").resolve("somepackdefaults");
+        serverProperties = dir.resolve("server.properties");
+        report = new StartReport();
+        blocker = new RecordingBlocker();
+    }
+
+    private void file(String name, String text) throws IOException {
+        Files.createDirectories(config);
+        Files.write(config.resolve(name), text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void pack(String text) throws IOException {
+        file("pack.properties", text);
+    }
+
+    private void player(String text) throws IOException {
+        file("player.properties", text);
+    }
+
+    /** A start as the game runs it: the world phase creates missing files, then this phase reads them. */
+    private ServerLinePhase run() {
+        EntryFiles files = new EntryFiles(config, ServerLineTable.NAME_KINDS);
+        try {
+            files.createMissingFiles();
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+        ServerLinePhase phase = new ServerLinePhase(serverProperties, report, blocker, LogManager.getLogger("test"), VANILLA_GAMERULES);
+        phase.apply(files);
+        return phase;
+    }
+
+    /** Runs a later start with a fresh report, as a new server process would. */
+    private ServerLinePhase restart() {
+        report = new StartReport();
+        return run();
+    }
+
+    private Properties readServerProperties() throws IOException {
+        Properties properties = new Properties();
+        properties.load(new ByteArrayInputStream(Files.readAllBytes(serverProperties)));
+        return properties;
+    }
+
+    private List<StartReport.Status> statuses(StartReport.Outcome outcome) {
+        List<StartReport.Status> result = new ArrayList<StartReport.Status>();
+        for (StartReport.Status status : report.statuses()) {
+            if (status.outcome() == outcome) {
+                result.add(status);
+            }
+        }
+        return result;
     }
 
     /** A world-type registry that knows exactly the given names, matched as the game matches them. */
@@ -187,9 +141,176 @@ class ServerLinePhaseTest {
     }
 
     @Test
+    void theFirstStartMakesThePlayerFileFromTheSuggestionsAndUsesIt() throws IOException {
+        file("suggestions.properties", "## for the pack maker\n# a comment for the player\nview-distance=10\n");
+        run();
+        String made = new String(Files.readAllBytes(config.resolve("player.properties")), StandardCharsets.UTF_8);
+        assertTrue(made.endsWith("# a comment for the player\nview-distance=10\n"), made);
+        assertFalse(made.contains("##"), made);
+        assertEquals("10", readServerProperties().getProperty("view-distance"));
+        assertNull(blocker.stoppedWith);
+    }
+
+    @Test
+    void aChangedSuggestionsFileLeavesAnExistingPlayerFileAlone() throws IOException {
+        file("suggestions.properties", "view-distance=10\n");
+        run();
+        byte[] before = Files.readAllBytes(config.resolve("player.properties"));
+        file("suggestions.properties", "view-distance=12\nkeepInventory=true\n");
+        restart();
+        assertArrayEquals(before, Files.readAllBytes(config.resolve("player.properties")));
+        assertEquals("10", readServerProperties().getProperty("view-distance"));
+    }
+
+    @Test
+    void theFilesFromTheTemplatesChangeNoSetting() throws IOException {
+        run();
+        assertTrue(Files.exists(config.resolve("pack.properties")));
+        assertTrue(Files.exists(config.resolve("suggestions.properties")));
+        assertTrue(Files.exists(config.resolve("player.properties")));
+        assertFalse(Files.exists(serverProperties));
+        assertTrue(report.statuses().isEmpty());
+        assertNull(blocker.stoppedWith);
+    }
+
+    @Test
+    void writesTheLinesOfBothFilesAndKeepsOtherLines() throws IOException {
+        Files.write(serverProperties, "view-distance=6\nmotd=Old\n".getBytes(StandardCharsets.ISO_8859_1));
+        pack("motd=Pack Server\n");
+        player("gamemode=2\n");
+        run();
+        Properties written = readServerProperties();
+        assertEquals("Pack Server", written.getProperty("motd"));
+        assertEquals("2", written.getProperty("gamemode"));
+        assertEquals("6", written.getProperty("view-distance"));
+        assertNull(blocker.stoppedWith);
+        assertEquals("server lines: 2 applied, 0 overridden by the pack file, 0 not applied, 0 errors",
+                report.summaryLines(SettingCategory.SERVER_LINE).get(0));
+        assertEquals("  server line motd=Pack Server (pack.properties line 1): applied", report.summaryLines(SettingCategory.SERVER_LINE).get(1));
+    }
+
+    @Test
+    void everyStartWritesTheLinesAgain() throws IOException {
+        pack("pvp=false\n");
+        player("view-distance=10\n");
+        run();
+        Files.write(serverProperties, "pvp=true\nview-distance=12\n".getBytes(StandardCharsets.ISO_8859_1));
+        restart();
+        assertEquals("false", readServerProperties().getProperty("pvp"));
+        assertEquals("10", readServerProperties().getProperty("view-distance"));
+    }
+
+    @Test
+    void thePlayerFileIsTheOnePlaceToChangeASetting() throws IOException {
+        player("view-distance=10\n");
+        run();
+        player("view-distance=12\n");
+        restart();
+        assertEquals("12", readServerProperties().getProperty("view-distance"));
+    }
+
+    @Test
+    void thePackFileWinsAndThePlayerLineIsReportedAsOverridden() throws IOException {
+        pack("pvp=false\n");
+        player("pvp=true\nmotd=Mine\n");
+        run();
+        assertEquals("false", readServerProperties().getProperty("pvp"));
+        assertEquals("Mine", readServerProperties().getProperty("motd"));
+        assertNull(blocker.stoppedWith);
+        List<StartReport.Status> overridden = statuses(StartReport.Outcome.OVERRIDDEN);
+        assertEquals(1, overridden.size());
+        assertEquals(Source.PLAYER, overridden.get(0).entry().source());
+        assertEquals("pvp", overridden.get(0).entry().name());
+        assertTrue(report.summaryLines(SettingCategory.SERVER_LINE)
+                .contains("  server line pvp=true (player.properties line 1): overridden by the pack file"), report.summaryLines(SettingCategory.SERVER_LINE).toString());
+    }
+
+    @Test
+    void anInvalidPlayerLineStopsEvenWhenThePackOverridesIt() throws IOException {
+        pack("pvp=false\n");
+        player("pvp=maybe\n");
+        run();
+        assertEquals(1, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("player.properties line 1: pvp=maybe"), blocker.stoppedWith.get(0).message());
+        assertFalse(Files.exists(serverProperties));
+    }
+
+    @Test
+    void aBadVanillaGameruleStopsBeforeAnyServerLineIsWrittenAndBothKindsAreReported() throws IOException {
+        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        pack("motd=Pack Server\npvp=maybe\n");
+        player("keepInventory=yes\nmodRule=anything\n");
+        run();
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertEquals(2, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("pack.properties line 2: pvp=maybe"), blocker.stoppedWith.get(0).message());
+        assertTrue(blocker.stoppedWith.get(1).message().startsWith("player.properties line 1: keepInventory=yes"), blocker.stoppedWith.get(1).message());
+    }
+
+    @Test
+    void levelNameInThePackFileStopsAndWritesNothing() throws IOException {
+        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        pack("level-name=x\nmotd=Pack Server\n");
+        run();
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertEquals(1, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().contains("level-name belongs in player.properties"), blocker.stoppedWith.get(0).message());
+    }
+
+    @Test
+    void levelNameInThePlayerFileIsWritten() throws IOException {
+        player("level-name=packworld\n");
+        run();
+        assertEquals("packworld", readServerProperties().getProperty("level-name"));
+    }
+
+    @Test
+    void aHostLineInThePlayerFileStopsAndWritesNothing() throws IOException {
+        byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
+        Files.write(serverProperties, before);
+        player("server-port=25570\n");
+        run();
+        assertArrayEquals(before, Files.readAllBytes(serverProperties));
+        assertTrue(blocker.stoppedWith.get(0).message().contains("server-port is a host line"), blocker.stoppedWith.get(0).message());
+    }
+
+    @Test
+    void aNameTwiceInOneFileStops() throws IOException {
+        player("pvp=false\npvp=false\n");
+        run();
+        assertEquals(1, blocker.stoppedWith.size());
+        assertEquals("player.properties line 2: pvp=false: pvp appears twice in this file (first at line 1). Allowed: each name once per file.",
+                blocker.stoppedWith.get(0).message());
+    }
+
+    @Test
+    void aLineThatIsNotNameValueStops() throws IOException {
+        pack("=false\n");
+        run();
+        assertEquals(1, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("pack.properties line 1: =false: not a name=value line"), blocker.stoppedWith.get(0).message());
+    }
+
+    @Test
+    void theServerFolderGetsNoFileOfTheModsOwn() throws IOException {
+        pack("pvp=false\n");
+        run();
+        restart();
+        restart();
+        List<String> names;
+        try (Stream<Path> files = Files.list(dir)) {
+            names = files.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList());
+        }
+        assertEquals(Arrays.asList("config", "server.properties"), names);
+    }
+
+    @Test
     void aKnownWorldTypeKeepsTheWrittenLines() throws IOException {
         Files.write(serverProperties, "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1));
-        entries("server-reapply.properties", "motd=Pack Server\nlevel-type=RTG\n");
+        pack("motd=Pack Server\n");
+        player("level-type=RTG\n");
         run().checkWorldType(knowing("default", "flat", "rtg"));
         assertNull(blocker.stoppedWith);
         assertEquals("RTG", readServerProperties().getProperty("level-type"));
@@ -200,22 +321,33 @@ class ServerLinePhaseTest {
     void anUnknownWorldTypeRestoresTheFileAndStops() throws IOException {
         byte[] before = "motd=Old\nlevel-type=DEFAULT\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "motd=Pack Server\nlevel-type=NOSUCH\n");
+        pack("motd=Pack Server\nlevel-type=NOSUCH\n");
         ServerLinePhase phase = run();
         assertEquals("NOSUCH", readServerProperties().getProperty("level-type"));
         phase.checkWorldType(knowing("default", "flat"));
         assertArrayEquals(before, Files.readAllBytes(serverProperties));
         assertEquals(1, blocker.stoppedWith.size());
-        assertTrue(blocker.stoppedWith.get(0).message().startsWith("server-reapply.properties line 2: level-type=NOSUCH: no installed mod"),
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("pack.properties line 2: level-type=NOSUCH: no installed mod"),
                 blocker.stoppedWith.get(0).message());
-        assertEquals("server lines: 0 applied, 0 skipped, 2 not applied, 1 error", report.summaryLines(SettingCategory.SERVER_LINE).get(0));
+        assertEquals("server lines: 0 applied, 0 overridden by the pack file, 2 not applied, 1 error",
+                report.summaryLines(SettingCategory.SERVER_LINE).get(0));
+    }
+
+    @Test
+    void anUnknownWorldTypeInAnOverriddenPlayerLineStillStops() throws IOException {
+        pack("level-type=FLAT\n");
+        player("level-type=NOSUCH\n");
+        run().checkWorldType(knowing("default", "flat"));
+        assertEquals(1, blocker.stoppedWith.size());
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("player.properties line 1: level-type=NOSUCH"), blocker.stoppedWith.get(0).message());
+        assertFalse(Files.exists(serverProperties));
     }
 
     @Test
     void anUnknownWorldTypeAlreadyInTheFileIsRestoredOverVanillasOwnResave() throws IOException {
         byte[] before = "motd=Old\nlevel-type=NOSUCH\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "level-type=NOSUCH\n");
+        pack("level-type=NOSUCH\n");
         ServerLinePhase phase = run();
         // Vanilla reads the file after pre-initialization and saves it again with its own defaults.
         Files.write(serverProperties, "#Minecraft server properties\nmotd=Old\nlevel-type=NOSUCH\npvp=true\n".getBytes(StandardCharsets.ISO_8859_1));
@@ -228,7 +360,7 @@ class ServerLinePhaseTest {
     void aFailingRegistryStillStopsAndRestores() throws IOException {
         byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "level-type=RTG\n");
+        pack("level-type=RTG\n");
         ServerLinePhase phase = run();
         phase.checkWorldType(new WorldTypeLookup() {
             @Override
@@ -247,7 +379,7 @@ class ServerLinePhaseTest {
 
     @Test
     void anUnknownWorldTypeOnANewServerRemovesTheFileItCreated() throws IOException {
-        entries("server-reapply.properties", "level-type=NOSUCH\n");
+        pack("level-type=NOSUCH\n");
         run().checkWorldType(knowing("default"));
         assertFalse(Files.exists(serverProperties));
         assertEquals(1, blocker.stoppedWith.size());
@@ -255,33 +387,14 @@ class ServerLinePhaseTest {
 
     @Test
     void withoutALevelTypeEntryNothingIsChecked() throws IOException {
-        entries("server-reapply.properties", "motd=Pack Server\n");
+        pack("motd=Pack Server\n");
         run().checkWorldType(knowing());
         assertNull(blocker.stoppedWith);
     }
 
-    private Properties readServerProperties() throws IOException {
-        Properties properties = new Properties();
-        properties.load(new ByteArrayInputStream(Files.readAllBytes(serverProperties)));
-        return properties;
-    }
-
     @Test
-    void writesReapplyLinesAndKeepsOtherLines() throws IOException {
-        Files.write(serverProperties, "view-distance=6\nmotd=Old\n".getBytes(StandardCharsets.ISO_8859_1));
-        entries("server-reapply.properties", "motd=Pack Server\ngamemode=2\n");
-        run();
-        Properties written = readServerProperties();
-        assertEquals("Pack Server", written.getProperty("motd"));
-        assertEquals("2", written.getProperty("gamemode"));
-        assertEquals("6", written.getProperty("view-distance"));
-        assertNull(blocker.stoppedWith);
-        assertTrue(report.summaryLines(SettingCategory.SERVER_LINE).get(0).startsWith("server lines: 2 applied"));
-    }
-
-    @Test
-    void createsTheFileWhenTheServerHasNoneYet() throws IOException {
-        entries("server-reapply.properties", "motd=Pack Server\n");
+    void createsServerPropertiesWhenTheServerHasNoneYet() throws IOException {
+        pack("motd=Pack Server\n");
         run();
         assertEquals("Pack Server", readServerProperties().getProperty("motd"));
     }
@@ -290,179 +403,36 @@ class ServerLinePhaseTest {
     void writesNothingAndStopsWhenAnyEntryIsInvalid() throws IOException {
         byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "motd=Pack Server\ndifficulty=hardd\n");
+        pack("motd=Pack Server\ndifficulty=hardd\n");
         run();
         assertArrayEquals(before, Files.readAllBytes(serverProperties));
         assertEquals(1, blocker.stoppedWith.size());
-        assertTrue(blocker.stoppedWith.get(0).message().startsWith("server-reapply.properties line 2: difficulty=hardd: "));
+        assertTrue(blocker.stoppedWith.get(0).message().startsWith("pack.properties line 2: difficulty=hardd: "));
     }
 
     @Test
     void doesNotRewriteAFileThatAlreadyHasTheValues() throws IOException {
         byte[] before = "# admin note\nmotd=Pack Server\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "motd=Pack Server\n");
+        pack("motd=Pack Server\n");
         run();
         assertArrayEquals(before, Files.readAllBytes(serverProperties));
     }
 
     @Test
     void leavesARemovedEntrysValueInPlace() throws IOException {
-        entries("server-reapply.properties", "pvp=false\n");
+        pack("pvp=false\n");
         run();
-        entries("server-reapply.properties", "# removed\n");
-        report = new StartReport();
-        run();
+        pack("# removed\n");
+        restart();
         assertEquals("false", readServerProperties().getProperty("pvp"));
-    }
-
-    @Test
-    void aNewServerGetsDefaultAndReapplyLinesOnItsFirstStartAndTheRecordAfterTheFirstTick() throws IOException {
-        entries("server-default.properties", "motd=Pack Server\ngamemode=2\n");
-        entries("server-reapply.properties", "pvp=false\n");
-        ServerLinePhase phase = run();
-        Properties written = readServerProperties();
-        assertEquals("Pack Server", written.getProperty("motd"));
-        assertEquals("2", written.getProperty("gamemode"));
-        assertEquals("false", written.getProperty("pvp"));
-        assertTrue(report.summaryLines(SettingCategory.SERVER_LINE).get(0).startsWith("server lines: 3 applied, 0 skipped"));
-        assertFalse(Files.exists(record()), "the record waits for the first tick");
-        phase.onFirstTickSucceeded();
-        JsonObject json = new JsonParser().parse(new String(Files.readAllBytes(record()), StandardCharsets.UTF_8)).getAsJsonObject();
-        assertEquals(1, json.get("format").getAsInt());
-        assertEquals("9.9.9", json.get("modVersion").getAsString());
-        Instant.parse(json.get("createdAt").getAsString());
-        assertEquals(3, json.size());
-    }
-
-    @Test
-    void anAdminChangeToADefaultLineStaysAfterARestart() throws IOException {
-        entries("server-default.properties", "motd=Pack Server\n");
-        run().onFirstTickSucceeded();
-        Files.write(serverProperties, "motd=Admin Server\n".getBytes(StandardCharsets.ISO_8859_1));
-        report = new StartReport();
-        run();
-        assertEquals("Admin Server", readServerProperties().getProperty("motd"));
-        assertDefaultSkipped("the setup already exists");
-    }
-
-    @Test
-    void aShippedServerPropertiesWithoutAWorldOrRecordIsInitialSetup() throws IOException {
-        Files.write(serverProperties, "motd=Shipped\nlevel-name=world\n".getBytes(StandardCharsets.ISO_8859_1));
-        entries("server-default.properties", "motd=Pack Server\n");
-        run();
-        assertEquals("Pack Server", readServerProperties().getProperty("motd"));
-    }
-
-    @Test
-    void anExistingWorldWithoutARecordSkipsDefaultLinesAndGetsTheRecord() throws IOException {
-        Files.write(serverProperties, "motd=Admin Server\n".getBytes(StandardCharsets.ISO_8859_1));
-        world("world");
-        entries("server-default.properties", "motd=Pack Server\n");
-        run().onFirstTickSucceeded();
-        assertEquals("Admin Server", readServerProperties().getProperty("motd"));
-        assertDefaultSkipped("the world already exists");
-        assertTrue(Files.exists(record()));
-    }
-
-    @Test
-    void aRecordWithADeletedWorldIsNotInitialSetup() throws IOException {
-        existingRecord();
-        entries("server-default.properties", "motd=Pack Server\n");
-        run();
-        assertFalse(Files.exists(serverProperties) && readServerProperties().containsKey("motd"));
-        assertDefaultSkipped("the setup already exists");
-    }
-
-    @Test
-    void anEmptyWorldFolderWithoutLevelDatIsInitialSetup() throws IOException {
-        Files.createDirectories(dir.resolve("world").resolve("region"));
-        entries("server-default.properties", "motd=Pack Server\n");
-        run();
-        assertEquals("Pack Server", readServerProperties().getProperty("motd"));
-    }
-
-    @Test
-    void aPackNamingAnotherWorldDoesNotMakeAnOldServerNew() throws IOException {
-        Files.write(serverProperties, "level-name=world\nmotd=Admin Server\n".getBytes(StandardCharsets.ISO_8859_1));
-        world("world");
-        entries("server-default.properties", "level-name=packworld\nmotd=Pack Server\n");
-        run();
-        Properties written = readServerProperties();
-        assertEquals("world", written.getProperty("level-name"));
-        assertEquals("Admin Server", written.getProperty("motd"));
-        assertDefaultSkipped("the world already exists");
-    }
-
-    @Test
-    void theWorldOfAReapplyLevelNameCountsToo() throws IOException {
-        world("packworld");
-        entries("server-default.properties", "motd=Pack Server\n");
-        entries("server-reapply.properties", "level-name=packworld\n");
-        run();
-        assertEquals("packworld", readServerProperties().getProperty("level-name"));
-        assertDefaultSkipped("the world already exists");
-    }
-
-    @Test
-    void theWorldOfTheDefaultLevelNameCountsOnANewFolder() throws IOException {
-        world("packworld");
-        entries("server-default.properties", "level-name=packworld\nmotd=Pack Server\n");
-        run();
-        assertDefaultSkipped("the world already exists");
-    }
-
-    @Test
-    void aPackUpdateReachesExistingServersOnlyThroughTheReapplyFile() throws IOException {
-        existingRecord();
-        Files.write(serverProperties, "allow-flight=false\n".getBytes(StandardCharsets.ISO_8859_1));
-        entries("server-default.properties", "allow-flight=true\n");
-        run();
-        assertEquals("false", readServerProperties().getProperty("allow-flight"));
-        entries("server-default.properties", "# moved\n");
-        entries("server-reapply.properties", "allow-flight=true\n");
-        report = new StartReport();
-        run();
-        assertEquals("true", readServerProperties().getProperty("allow-flight"));
-    }
-
-    @Test
-    void aStoppedStartWritesNoRecord() throws IOException {
-        entries("server-default.properties", "difficulty=hardd\n");
-        run().onFirstTickSucceeded();
-        assertFalse(Files.exists(record()));
-    }
-
-    @Test
-    void anExistingRecordIsNeverReplaced() throws IOException {
-        existingRecord();
-        byte[] before = Files.readAllBytes(record());
-        run().onFirstTickSucceeded();
-        assertFalse(SetupRecord.besides(serverProperties).writeIfAbsent(Instant.now(), "1.0.0"));
-        assertArrayEquals(before, Files.readAllBytes(record()));
-    }
-
-    @Test
-    void aDefaultLevelTypeWrittenAtInitialSetupIsChecked() throws IOException {
-        entries("server-default.properties", "level-type=NOSUCH\n");
-        run().checkWorldType(knowing("default"));
-        assertEquals(1, blocker.stoppedWith.size());
-        assertFalse(Files.exists(serverProperties));
-    }
-
-    @Test
-    void aSkippedDefaultLevelTypeIsNotChecked() throws IOException {
-        existingRecord();
-        entries("server-default.properties", "level-type=NOSUCH\n");
-        run().checkWorldType(knowing("default"));
-        assertNull(blocker.stoppedWith);
     }
 
     @Test
     void aMalformedEscapeInServerPropertiesStopsWithAProblemInsteadOfThrowing() throws IOException {
         byte[] before = "motd=C:\\users\\ultra\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "pvp=false\n");
+        pack("pvp=false\n");
         run();
         assertEquals(1, blocker.stoppedWith.size());
         assertTrue(blocker.stoppedWith.get(0).message().contains("malformed escape"), blocker.stoppedWith.get(0).message());
@@ -473,7 +443,7 @@ class ServerLinePhaseTest {
     void aFailedWriteStopsWithAProblemAndLeavesTheFileAsItWas() throws IOException {
         byte[] before = "motd=Old\n".getBytes(StandardCharsets.ISO_8859_1);
         Files.write(serverProperties, before);
-        entries("server-reapply.properties", "motd=New\n");
+        pack("motd=New\n");
         assertTrue(serverProperties.toFile().setReadOnly());
         try {
             run();

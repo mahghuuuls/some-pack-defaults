@@ -8,7 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The text of the inspection command: every entry of this start with its setting category, mode,
+ * The text of the inspection command: every entry of this start with its setting category, file,
  * configured value, current value where it can be read, and status; then every error. It only
  * formats what the start reports hold and what {@link CurrentValues} gives; it reads nothing itself.
  */
@@ -59,7 +59,7 @@ public final class InspectionLines {
         Entry entry = status.entry();
         StringBuilder text = new StringBuilder()
                 .append(entry.category().label()).append(' ').append(entry.name())
-                .append(" (").append(entry.mode().label()).append(", ").append(entry.fileName()).append(" line ").append(entry.lineNumber()).append("): ")
+                .append(" (").append(entry.fileName()).append(" line ").append(entry.lineNumber()).append("): ")
                 .append("configured ").append(entry.value());
         String current = current(entry, values);
         if (current != null) {

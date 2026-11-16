@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-/** Everything one read of the four configuration files produced, in file order. */
+/** Everything one read of the pack file and the player file produced: pack file first, each in file order. */
 public final class EntrySet {
 
     private final List<Entry> entries;
@@ -29,23 +29,7 @@ public final class EntrySet {
         return result;
     }
 
-    public List<Entry> entries(SettingCategory category, Mode mode) {
-        List<Entry> result = new ArrayList<Entry>();
-        for (Entry entry : entries) {
-            if (entry.category() == category && entry.mode() == mode) {
-                result.add(entry);
-            }
-        }
-        return result;
-    }
-
-    public List<MalformedLine> malformedLines(SettingCategory category) {
-        List<MalformedLine> result = new ArrayList<MalformedLine>();
-        for (MalformedLine line : malformedLines) {
-            if (line.category() == category) {
-                result.add(line);
-            }
-        }
-        return result;
+    public List<MalformedLine> malformedLines() {
+        return malformedLines;
     }
 }

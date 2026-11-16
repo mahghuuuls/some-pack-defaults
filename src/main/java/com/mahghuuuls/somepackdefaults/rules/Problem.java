@@ -32,7 +32,7 @@ public final class Problem {
         return entryText;
     }
 
-    /** Example: {@code server-reapply.properties line 4: gamemode=9: out of range. Allowed: 0 to 3.} */
+    /** Example: {@code player.properties line 4: gamemode=9: out of range. Allowed: 0 to 3.} */
     public String message() {
         StringBuilder text = new StringBuilder();
         text.append(fileName);

@@ -1,8 +1,8 @@
 package com.mahghuuuls.somepackdefaults.report;
 
 import com.mahghuuuls.somepackdefaults.config.Entry;
-import com.mahghuuuls.somepackdefaults.config.Mode;
 import com.mahghuuuls.somepackdefaults.config.SettingCategory;
+import com.mahghuuuls.somepackdefaults.config.Source;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import org.junit.jupiter.api.Test;
 
@@ -42,78 +42,78 @@ class InspectionLinesTest {
         }
     }
 
-    private static Entry line(Mode mode, String name, String value) {
-        return new Entry(SettingCategory.SERVER_LINE, mode, name, value, 1);
+    private static Entry line(Source source, String name, String value) {
+        return new Entry(SettingCategory.SERVER_LINE, source, name, value, 1);
     }
 
-    private static Entry rule(Mode mode, String name, String value) {
-        return new Entry(SettingCategory.GAMERULE, mode, name, value, 2);
+    private static Entry rule(Source source, String name, String value) {
+        return new Entry(SettingCategory.GAMERULE, source, name, value, 2);
     }
 
     @Test
-    void aSkippedDefaultLineShowsItsConfiguredAndCurrentValueAndWhy() {
+    void anOverriddenPlayerLineShowsItsConfiguredAndCurrentValueAndWhy() {
         StartReport report = new StartReport();
-        report.skipped(line(Mode.DEFAULT, "motd", "Pack Server"), "the setup already exists");
+        report.overridden(line(Source.PLAYER, "motd", "Mine"));
         Values values = new Values(false);
-        values.file.put("motd", "Admin Server");
-        values.running.put("motd", "Admin Server");
+        values.file.put("motd", "Pack Server");
+        values.running.put("motd", "Pack Server");
         List<String> lines = InspectionLines.lines(Collections.singletonList(report), values);
         assertEquals("Some Pack Defaults inspection: 1 entry, 0 errors", lines.get(0));
-        assertEquals("server line motd (Default, server-default.properties line 1): configured Pack Server; current Admin Server; skipped: the setup already exists",
+        assertEquals("server line motd (player.properties line 1): configured Mine; current Pack Server; overridden by the pack file",
                 lines.get(1));
     }
 
     @Test
     void aRunningValueThatDiffersFromTheFileShowsBoth() {
         StartReport report = new StartReport();
-        report.applied(line(Mode.REAPPLY, "pvp", "false"));
+        report.applied(line(Source.PACK, "pvp", "false"));
         Values values = new Values(false);
         values.file.put("pvp", "true");
         values.running.put("pvp", "false");
-        assertEquals("server line pvp (Reapply, server-reapply.properties line 1): configured false; in server.properties true, running false; applied",
+        assertEquals("server line pvp (pack.properties line 1): configured false; in server.properties true, running false; applied",
                 InspectionLines.lines(Collections.singletonList(report), values).get(1));
     }
 
     @Test
     void aLineWithoutAReadableRunningValueShowsTheFileValueOrItsAbsence() {
         StartReport report = new StartReport();
-        report.applied(line(Mode.REAPPLY, "spawn-protection", "0"));
-        report.applied(line(Mode.REAPPLY, "enable-command-block", "true"));
+        report.applied(line(Source.PACK, "spawn-protection", "0"));
+        report.applied(line(Source.PACK, "enable-command-block", "true"));
         Values values = new Values(false);
         values.file.put("spawn-protection", "0");
         List<String> lines = InspectionLines.lines(Collections.singletonList(report), values);
-        assertEquals("server line spawn-protection (Reapply, server-reapply.properties line 1): configured 0; in server.properties 0 (running value not readable); applied",
+        assertEquals("server line spawn-protection (pack.properties line 1): configured 0; in server.properties 0 (running value not readable); applied",
                 lines.get(1));
-        assertEquals("server line enable-command-block (Reapply, server-reapply.properties line 1): configured true; not in server.properties; applied",
+        assertEquals("server line enable-command-block (pack.properties line 1): configured true; not in server.properties; applied",
                 lines.get(2));
     }
 
     @Test
     void singleplayerShowsServerLinesAsUnusedWithoutValuesAndListsErrors() {
         StartReport report = new StartReport();
-        report.notApplied(line(Mode.REAPPLY, "difficulty", "hardd"), "not used in singleplayer");
+        report.notApplied(line(Source.PACK, "difficulty", "hardd"), "not used in singleplayer");
         report.problems(SettingCategory.SERVER_LINE, Collections.singletonList(
-                new Problem("server-reapply.properties", 1, "difficulty=hardd", "not a whole number", "0 to 3")));
+                new Problem("pack.properties", 1, "difficulty=hardd", "not a whole number", "0 to 3")));
         List<String> lines = InspectionLines.lines(Collections.singletonList(report), new Values(true));
         assertEquals("Some Pack Defaults inspection: 1 entry, 1 error (singleplayer)", lines.get(0));
-        assertEquals("server line difficulty (Reapply, server-reapply.properties line 1): configured hardd; not applied: not used in singleplayer", lines.get(1));
-        assertEquals("error: server-reapply.properties line 1: difficulty=hardd: not a whole number. Allowed: 0 to 3.", lines.get(2));
+        assertEquals("server line difficulty (pack.properties line 1): configured hardd; not applied: not used in singleplayer", lines.get(1));
+        assertEquals("error: pack.properties line 1: difficulty=hardd: not a whole number. Allowed: 0 to 3.", lines.get(2));
     }
 
     @Test
     void gamerulesShowTheWorldValueAndServerLinesComeFirst() {
         StartReport serverLines = new StartReport();
-        serverLines.applied(line(Mode.REAPPLY, "motd", "Pack"));
+        serverLines.applied(line(Source.PACK, "motd", "Pack"));
         StartReport gamerules = new StartReport();
-        gamerules.skipped(rule(Mode.DEFAULT, "keepInventory", "true"), "the world already exists");
-        gamerules.applied(rule(Mode.REAPPLY, "modRule", "on"));
+        gamerules.overridden(rule(Source.PLAYER, "keepInventory", "true"));
+        gamerules.applied(rule(Source.PACK, "modRule", "on"));
         Values values = new Values(false);
         values.file.put("motd", "Pack");
         values.running.put("motd", "Pack");
         values.running.put("keepInventory", "false");
         List<String> lines = InspectionLines.lines(Arrays.asList(gamerules, serverLines), values);
-        assertEquals("server line motd (Reapply, server-reapply.properties line 1): configured Pack; current Pack; applied", lines.get(1));
-        assertEquals("gamerule keepInventory (Default, gamerules-default.properties line 2): configured true; current false; skipped: the world already exists", lines.get(2));
-        assertEquals("gamerule modRule (Reapply, gamerules-reapply.properties line 2): configured on; current unknown; applied", lines.get(3));
+        assertEquals("server line motd (pack.properties line 1): configured Pack; current Pack; applied", lines.get(1));
+        assertEquals("gamerule keepInventory (player.properties line 2): configured true; current false; overridden by the pack file", lines.get(2));
+        assertEquals("gamerule modRule (pack.properties line 2): configured on; current unknown; applied", lines.get(3));
     }
 }
