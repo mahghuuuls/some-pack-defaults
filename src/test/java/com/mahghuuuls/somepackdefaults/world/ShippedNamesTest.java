@@ -1,11 +1,14 @@
 package com.mahghuuuls.somepackdefaults.world;
 
+import com.mahghuuuls.somepackdefaults.config.Entry;
 import com.mahghuuuls.somepackdefaults.config.EntryFiles;
 import com.mahghuuuls.somepackdefaults.config.EntrySet;
 import com.mahghuuuls.somepackdefaults.rules.EntryChecker;
 import com.mahghuuuls.somepackdefaults.rules.Problem;
 import com.mahghuuuls.somepackdefaults.rules.ServerLineTable;
+import com.mahghuuuls.somepackdefaults.rules.WorldTypeLookup;
 import net.minecraft.world.GameRules;
+import net.minecraft.world.WorldType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -26,6 +29,19 @@ class ShippedNamesTest {
 
     /** A commented-out example line: a # directly followed by name=value. */
     private static final Pattern EXAMPLE = Pattern.compile("^#[A-Za-z][A-Za-z0-9.-]*=.*$");
+
+    /** The world types of vanilla 1.12.2, matched by name as the server matches level-type. */
+    private static final WorldTypeLookup VANILLA_WORLD_TYPES = new WorldTypeLookup() {
+        @Override
+        public boolean isKnown(String name) {
+            return WorldType.byName(name) != null;
+        }
+
+        @Override
+        public List<String> knownNames() {
+            return new ArrayList<String>();
+        }
+    };
 
     @Test
     void noVanillaGameruleHasAServerLineName() {
@@ -71,6 +87,14 @@ class ShippedNamesTest {
         assertEquals(35, set.entries().size());
         List<Problem> problems = new ArrayList<Problem>(EntryChecker.checkServerLines(set));
         problems.addAll(EntryChecker.checkGamerules(set, MinecraftGamerules.vanilla()));
+        for (Entry entry : set.entries()) {
+            if (entry.name().equals(ServerLineTable.LEVEL_TYPE)) {
+                Problem worldType = EntryChecker.checkWorldType(entry, VANILLA_WORLD_TYPES);
+                if (worldType != null) {
+                    problems.add(worldType);
+                }
+            }
+        }
         assertTrue(problems.isEmpty(), problems.toString());
     }
 }
